@@ -1,4 +1,5 @@
 streamlit
 pyvista
 plotly
-mega.py
+mega.pyx
+pycryptodome
