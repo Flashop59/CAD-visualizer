@@ -3,104 +3,55 @@ import tempfile
 import os
 import pyvista as pv
 import plotly.graph_objects as go
-from mega import Mega
+from megapyx import Mega    # ← updated import
 
-# ---------------------- Streamlit Page Setup ----------------------
-st.set_page_config(page_title="MEGA SolidWorks Viewer", layout="wide")
+st.set_page_config(page_title="MEGA CAD Viewer", layout="wide")
 st.title("🔗 MEGA-Connected SolidWorks / CAD Viewer")
 
-st.markdown("""
-View your 3D CAD / SolidWorks models directly from your **MEGA.nz** cloud account.  
-Supported formats: `.stl`, `.obj`, `.step`, `.ply`, `.glb`, `.gltf`
-""")
-
-# ---------------------- MEGA Connection ----------------------
-@st.cache_resource(show_spinner=False)
+@st.cache_resource
 def connect_mega():
     try:
         mega = Mega()
-        m = mega.login(st.secrets["mega_email"], st.secrets["mega_password"])
-        return m
+        return mega.login(st.secrets["mega_email"], st.secrets["mega_password"])
     except Exception as e:
-        st.error(f"❌ Could not connect to MEGA: {e}")
+        st.error(f"Login failed: {e}")
         return None
 
 m = connect_mega()
 if not m:
     st.stop()
 
-# ---------------------- Helper: Plotly Mesh Viewer ----------------------
-def show_plotly_mesh(mesh):
-    """Render a PyVista mesh using Plotly (browser-safe)"""
-    vertices = mesh.points
-    faces = mesh.faces.reshape((-1, 4))[:, 1:4]
-    fig = go.Figure(
-        data=[
-            go.Mesh3d(
-                x=vertices[:, 0],
-                y=vertices[:, 1],
-                z=vertices[:, 2],
-                i=faces[:, 0],
-                j=faces[:, 1],
-                k=faces[:, 2],
-                color='lightblue',
-                opacity=1.0,
-            )
-        ]
-    )
-    fig.update_layout(scene=dict(aspectmode="data"), margin=dict(l=0, r=0, b=0, t=0))
-    st.plotly_chart(fig, use_container_width=True)
-
-# ---------------------- Fetch MEGA Files ----------------------
 st.sidebar.header("📂 Your MEGA Files")
+files = m.get_files()
+file_map = {data["a"]["n"]: key for key, data in files.items() if "a" in data and "n" in data}
+supported = (".stl", ".obj", ".ply", ".step", ".glb", ".gltf")
+cad_files = {n: fid for n, fid in file_map.items() if n.lower().endswith(supported)}
 
-try:
-    files = m.get_files()
-    file_map = {
-        data["a"]["n"]: key
-        for key, data in files.items()
-        if "a" in data and "n" in data
-    }
-
-    supported_ext = (".stl", ".obj", ".step", ".ply", ".glb", ".gltf")
-    cad_files = {name: fid for name, fid in file_map.items() if name.lower().endswith(supported_ext)}
-
-    if not cad_files:
-        st.warning("No supported CAD files found in your MEGA account.")
-        st.stop()
-
-    selected_file = st.sidebar.selectbox("Select a file to view", list(cad_files.keys()))
-
-except Exception as e:
-    st.error(f"Error fetching MEGA files: {e}")
+if not cad_files:
+    st.warning("No supported CAD files found.")
     st.stop()
 
-# ---------------------- Download and Visualize ----------------------
-if selected_file and st.sidebar.button("🔍 Load Model"):
-    try:
-        ext = os.path.splitext(selected_file)[1].lower()
-        temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=ext).name
+fname = st.sidebar.selectbox("Select file", list(cad_files.keys()))
 
-        st.sidebar.info(f"Downloading **{selected_file}** from MEGA...")
-        m.download(cad_files[selected_file], temp_path)
-        st.success(f"✅ Downloaded: {selected_file}")
+if fname and st.sidebar.button("Load"):
+    ext = os.path.splitext(fname)[1].lower()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext).name
+    m.download(cad_files[fname], tmp)
 
-        if ext in [".stl", ".obj", ".ply", ".step"]:
-            mesh = pv.read(temp_path)
-            show_plotly_mesh(mesh)
-
-        elif ext in [".glb", ".gltf"]:
-            st.markdown("### GLB / GLTF Model Viewer")
-            st.components.v1.html(f"""
-                <model-viewer src="file://{temp_path}" camera-controls auto-rotate style="width:100%;height:600px;">
-                </model-viewer>
-                <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-            """, height=650)
-
-        else:
-            st.warning("Unsupported file format.")
-
-        os.remove(temp_path)
-
-    except Exception as e:
-        st.error(f"❌ Could not visualize file: {e}")
+    if ext in [".stl", ".obj", ".ply", ".step"]:
+        mesh = pv.read(tmp)
+        v, f = mesh.points, mesh.faces.reshape((-1, 4))[:, 1:4]
+        fig = go.Figure([go.Mesh3d(
+            x=v[:, 0], y=v[:, 1], z=v[:, 2],
+            i=f[:, 0], j=f[:, 1], k=f[:, 2],
+            color='lightblue'
+        )])
+        fig.update_layout(scene=dict(aspectmode="data"))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.components.v1.html(f"""
+        <model-viewer src="file://{tmp}" camera-controls auto-rotate style="width:100%;height:600px;">
+        </model-viewer>
+        <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+        """, height=650)
+    os.remove(tmp)
