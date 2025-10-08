@@ -3,16 +3,21 @@ import tempfile
 import os
 import pyvista as pv
 import plotly.graph_objects as go
-from megapyx import Mega
+
+# Fix PyCrypto import compatibility (needed for mega.py)
+import sys
+sys.modules['Crypto'] = __import__('Cryptodome')
+
+from mega import Mega
 
 # ------------------------------------------------------------
-# STREAMLIT PAGE CONFIGURATION
+# STREAMLIT CONFIGURATION
 # ------------------------------------------------------------
 st.set_page_config(page_title="MEGA CAD Viewer", layout="wide")
 st.title("🔗 MEGA-Connected SolidWorks / CAD Viewer")
 
 st.markdown("""
-Upload, browse, and visualize your CAD / SolidWorks models directly from your **MEGA.nz** cloud account.  
+View and interact with your 3D CAD / SolidWorks files directly from your **MEGA.nz** account.  
 Supported formats: `.stl`, `.obj`, `.ply`, `.step`, `.glb`, `.gltf`
 """)
 
@@ -36,10 +41,10 @@ if not m:
     st.stop()
 
 # ------------------------------------------------------------
-# PLOTLY VISUALIZATION (for browser safety)
+# PLOTLY 3D VISUALIZATION (no OpenGL dependency)
 # ------------------------------------------------------------
 def render_mesh_plotly(mesh):
-    """Render a PyVista mesh using Plotly (no OpenGL required)."""
+    """Render a PyVista mesh using Plotly (headless compatible)."""
     vertices = mesh.points
     faces = mesh.faces.reshape((-1, 4))[:, 1:4]
     fig = go.Figure(
@@ -63,9 +68,8 @@ def render_mesh_plotly(mesh):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-
 # ------------------------------------------------------------
-# FETCH USER FILES FROM MEGA
+# FETCH FILES FROM MEGA
 # ------------------------------------------------------------
 st.sidebar.header("📂 Your MEGA Files")
 
@@ -78,9 +82,7 @@ try:
     }
 
     supported_ext = (".stl", ".obj", ".ply", ".step", ".glb", ".gltf")
-    cad_files = {
-        name: fid for name, fid in file_map.items() if name.lower().endswith(supported_ext)
-    }
+    cad_files = {n: fid for n, fid in file_map.items() if n.lower().endswith(supported_ext)}
 
     if not cad_files:
         st.warning("⚠️ No supported 3D files found in your MEGA account.")
@@ -93,7 +95,7 @@ except Exception as e:
     st.stop()
 
 # ------------------------------------------------------------
-# DOWNLOAD AND VISUALIZE FILE
+# DOWNLOAD AND VISUALIZE
 # ------------------------------------------------------------
 if selected_file and st.sidebar.button("🔍 Load 3D Model"):
     try:
@@ -104,12 +106,10 @@ if selected_file and st.sidebar.button("🔍 Load 3D Model"):
         m.download(cad_files[selected_file], tmp_path)
         st.success(f"✅ File downloaded: {selected_file}")
 
-        # Mesh-based visualization
         if ext in [".stl", ".obj", ".ply", ".step"]:
             mesh = pv.read(tmp_path)
             render_mesh_plotly(mesh)
 
-        # GLTF/GLB models (browser-native WebGL)
         elif ext in [".glb", ".gltf"]:
             st.markdown("### 🌐 WebGL Model Viewer")
             st.components.v1.html(f"""
@@ -124,4 +124,4 @@ if selected_file and st.sidebar.button("🔍 Load 3D Model"):
         os.remove(tmp_path)
 
     except Exception as e:
-        st.error(f"❌ Could not visualize file: {e}")
+        st.error(f"❌ Visualization error: {e}")
