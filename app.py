@@ -2,19 +2,19 @@ import streamlit as st
 import tempfile
 import os
 import pyvista as pv
-from stpyvista import stpyvista
+import plotly.graph_objects as go
 from mega import Mega
 
+# ---------------------- Streamlit Page Setup ----------------------
 st.set_page_config(page_title="MEGA SolidWorks Viewer", layout="wide")
-
 st.title("🔗 MEGA-Connected SolidWorks / CAD Viewer")
 
 st.markdown("""
-Upload, browse, or visualize your CAD / SolidWorks models directly from MEGA.nz.
+View your 3D CAD / SolidWorks models directly from your **MEGA.nz** cloud account.  
 Supported formats: `.stl`, `.obj`, `.step`, `.ply`, `.glb`, `.gltf`
 """)
 
-# --- 1️⃣ Connect to MEGA ---
+# ---------------------- MEGA Connection ----------------------
 @st.cache_resource(show_spinner=False)
 def connect_mega():
     try:
@@ -26,11 +26,32 @@ def connect_mega():
         return None
 
 m = connect_mega()
-
 if not m:
     st.stop()
 
-# --- 2️⃣ List MEGA files ---
+# ---------------------- Helper: Plotly Mesh Viewer ----------------------
+def show_plotly_mesh(mesh):
+    """Render a PyVista mesh using Plotly (browser-safe)"""
+    vertices = mesh.points
+    faces = mesh.faces.reshape((-1, 4))[:, 1:4]
+    fig = go.Figure(
+        data=[
+            go.Mesh3d(
+                x=vertices[:, 0],
+                y=vertices[:, 1],
+                z=vertices[:, 2],
+                i=faces[:, 0],
+                j=faces[:, 1],
+                k=faces[:, 2],
+                color='lightblue',
+                opacity=1.0,
+            )
+        ]
+    )
+    fig.update_layout(scene=dict(aspectmode="data"), margin=dict(l=0, r=0, b=0, t=0))
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---------------------- Fetch MEGA Files ----------------------
 st.sidebar.header("📂 Your MEGA Files")
 
 try:
@@ -44,40 +65,40 @@ try:
     supported_ext = (".stl", ".obj", ".step", ".ply", ".glb", ".gltf")
     cad_files = {name: fid for name, fid in file_map.items() if name.lower().endswith(supported_ext)}
 
-    if cad_files:
-        selected_file = st.sidebar.selectbox("Select a file to view", list(cad_files.keys()))
-    else:
+    if not cad_files:
         st.warning("No supported CAD files found in your MEGA account.")
         st.stop()
+
+    selected_file = st.sidebar.selectbox("Select a file to view", list(cad_files.keys()))
+
 except Exception as e:
     st.error(f"Error fetching MEGA files: {e}")
     st.stop()
 
-# --- 3️⃣ Load and visualize selected file ---
+# ---------------------- Download and Visualize ----------------------
 if selected_file and st.sidebar.button("🔍 Load Model"):
     try:
         ext = os.path.splitext(selected_file)[1].lower()
         temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=ext).name
 
-        st.sidebar.info(f"Downloading {selected_file} from MEGA...")
+        st.sidebar.info(f"Downloading **{selected_file}** from MEGA...")
         m.download(cad_files[selected_file], temp_path)
+        st.success(f"✅ Downloaded: {selected_file}")
 
         if ext in [".stl", ".obj", ".ply", ".step"]:
             mesh = pv.read(temp_path)
-            plotter = pv.Plotter(window_size=[900, 700])
-            plotter.add_mesh(mesh, color=True, smooth_shading=True)
-            plotter.show_axes()
-            plotter.show_grid()
-            stpyvista(plotter)
+            show_plotly_mesh(mesh)
+
         elif ext in [".glb", ".gltf"]:
-            st.markdown("### GLB / GLTF Model Viewer:")
+            st.markdown("### GLB / GLTF Model Viewer")
             st.components.v1.html(f"""
                 <model-viewer src="file://{temp_path}" camera-controls auto-rotate style="width:100%;height:600px;">
                 </model-viewer>
                 <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
             """, height=650)
+
         else:
-            st.warning("Unsupported format.")
+            st.warning("Unsupported file format.")
 
         os.remove(temp_path)
 
